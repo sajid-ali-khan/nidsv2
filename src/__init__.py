@@ -1,75 +1,97 @@
-from scapy.all import rdpcap
+import pandas as pd
+import joblib
 import os
-from collections import deque
+from pyflowmeter.sniffer import create_sniffer
 
-from scapy.layers.inet import IP, TCP, UDP
+# --- Configuration: Define paths for assets and input file ---
+MODEL_PATH = 'random_forest_model.pkl'
+COLUMNS_PATH = 'model_columns.joblib'
+PCAP_TO_ANALYZE = 'sample.pcap' # <-- Point this to your new .pcap file
 
-PCAP_FILE = 'sample.pcap'
+def create_feature_mapping():
+    """Creates a dictionary to map pyflowmeter column names to the model's expected names."""
+    return {
+        'dst_port': 'Destination Port', 'duration': 'Flow Duration',
+        'fwd_pkts_tot': 'Total Fwd Packets', 'fwd_bytes_tot': 'Total Length of Fwd Packets',
+        'fwd_pkt_len_max': 'Fwd Packet Length Max', 'fwd_pkt_len_min': 'Fwd Packet Length Min',
+        'fwd_pkt_len_mean': 'Fwd Packet Length Mean', 'fwd_pkt_len_std': 'Fwd Packet Length Std',
+        'bwd_pkt_len_max': 'Bwd Packet Length Max', 'bwd_pkt_len_min': 'Bwd Packet Length Min',
+        'bwd_pkt_len_mean': 'Bwd Packet Length Mean', 'bwd_pkt_len_std': 'Bwd Packet Length Std',
+        'flow_b_s': 'Flow Bytes/s', 'flow_pkt_s': 'Flow Packets/s',
+        'flow_iat_mean': 'Flow IAT Mean', 'flow_iat_std': 'Flow IAT Std',
+        'flow_iat_max': 'Flow IAT Max', 'flow_iat_min': 'Flow IAT Min',
+        'fwd_iat_tot': 'Fwd IAT Total', 'fwd_iat_mean': 'Fwd IAT Mean',
+        'fwd_iat_std': 'Fwd IAT Std', 'fwd_iat_max': 'Fwd IAT Max',
+        'fwd_iat_min': 'Fwd IAT Min', 'bwd_iat_tot': 'Bwd IAT Total',
+        'bwd_iat_mean': 'Bwd IAT Mean', 'bwd_iat_std': 'Bwd IAT Std',
+        'bwd_iat_max': 'Bwd IAT Max', 'bwd_iat_min': 'Bwd IAT Min',
+        'fwd_hdr_len': 'Fwd Header Length', 'bwd_hdr_len': 'Bwd Header Length',
+        'fwd_pkt_s': 'Fwd Packets/s', 'bwd_pkt_s': 'Bwd Packets/s',
+        'pkt_len_min': 'Min Packet Length', 'pkt_len_max': 'Max Packet Length',
+        'pkt_len_mean': 'Packet Length Mean', 'pkt_len_std': 'Packet Length Std',
+        'pkt_len_var': 'Packet Length Variance', 'fin_cnt': 'FIN Flag Count',
+        'psh_cnt': 'PSH Flag Count', 'ack_cnt': 'ACK Flag Count',
+        'pkt_size_avg': 'Average Packet Size', 'fwd_subflow_bytes': 'Subflow Fwd Bytes',
+        'fwd_win_init': 'Init_Win_bytes_forward', 'bwd_win_init': 'Init_Win_bytes_backward',
+        'fwd_data_pkts_tot': 'act_data_pkt_fwd', 'fwd_seg_size_min': 'min_seg_size_forward',
+        'active_mean': 'Active Mean', 'active_max': 'Active Max', 'active_min': 'Active Min',
+        'idle_mean': 'Idle Mean', 'idle_max': 'Idle Max', 'idle_min': 'Idle Min',
+    }
 
-def get_flow_key(packet):
-    """Creates a unique key for a packet's flow."""
-    if IP in packet and (TCP in packet or UDP in packet):
-        protocol = 'TCP' if TCP in packet else 'UDP'
-        src_ip = packet[IP].src
-        dst_ip = packet[IP].dst
-        src_port = packet[protocol].sport
-        dst_port = packet[protocol].dport
+def predict_from_pcap(pcap_file):
+    """Analyzes a pcap file, translates features, and makes a prediction."""
 
-        # To keep flows consistent, we order by IP and port
-        if (src_ip, src_port) > (dst_ip, dst_port):
-            src_ip, dst_ip = dst_ip, src_ip
-            src_port, dst_port = dst_port, src_port
-
-        return protocol, src_ip, src_port, dst_ip, dst_port
-    return None
-
-def process_pcap(file_path):
-    """Reads a pcap file, groups packets into flows, and moves them all to a queue."""
-    if not os.path.exists(file_path):
-        print(f"Error: File '{file_path}' does not exist")
-        return
-
-    print(f"Reading packets from '{file_path}'...")
+    # 1. Load the trained model and the required column list
     try:
-        packets = rdpcap(file_path)
-    except Exception as e:
-        print(f"Error reading pcap file: {e}")
+        model = joblib.load(MODEL_PATH)
+        model_columns = joblib.load(COLUMNS_PATH)
+    except FileNotFoundError:
+        print(f"❌ Error: Model or column file not found. Run the training script first.")
         return
 
-    active_flows = {}
-    analysis_queue = deque()
+    # 2. Generate features from the new pcap file
+    output_csv = 'temp_flow_features.csv'
+    if os.path.exists(output_csv):
+        os.remove(output_csv)
 
-    # --- Step 1: Group all packets into flows ---
-    for packet in packets:
-        flow_key = get_flow_key(packet)
-        if not flow_key:
-            continue
+    sniffer = create_sniffer(input_file=pcap_file, to_csv=True, output_file=output_csv)
+    sniffer.start()
+    sniffer.join()
 
-        packet_time = float(packet.time)
+    if not os.path.exists(output_csv):
+        print("❌ Error: pyflowmeter did not generate a feature file.")
+        return
 
-        if flow_key not in active_flows:
-            active_flows[flow_key] = {
-                'packets': [packet],
-                'start_time': packet_time,
-                'last_seen': packet_time,
-                'key': flow_key
-            }
-        else:
-            active_flows[flow_key]['packets'].append(packet)
-            active_flows[flow_key]['last_seen'] = packet_time
+    df_new_raw = pd.read_csv(output_csv)
+    os.remove(output_csv)
 
-    # --- Step 2: Move all collected flows to the analysis queue ---
-    print(f'\nEnd of PCAP file. Moving {len(active_flows)} flows to analysis queue.')
-    analysis_queue.extend(active_flows.values())
-    active_flows.clear()
+    # 3. Translate the pyflowmeter output to match the model's training data
+    df_translated = df_new_raw.copy()
+    time_cols = [col for col in df_translated.columns if 'iat' in col or 'duration' in col or 'active' in col or 'idle' in col]
+    for col in time_cols:
+        df_translated[col] = df_translated[col] * 1_000_000
 
-    print(f'\nProcessing complete.')
-    print(f'Total flows in analysis queue: {len(analysis_queue)}')
+    mapping = create_feature_mapping()
+    df_translated.rename(columns=mapping, inplace=True)
 
-    # The next step is to process flows from this analysis_queue
-    return analysis_queue
+    # 4. Align the translated data with the model's required columns
+    missing_cols = set(model_columns) - set(df_translated.columns)
+    for c in missing_cols:
+        df_translated[c] = 0
+    df_aligned = df_translated[model_columns]
+
+    # 5. Make predictions
+    predictions = model.predict(df_aligned)
+    df_new_raw['Predicted_Label'] = predictions
+
+    # 6. Display results
+    print("\n--- Prediction Results ---")
+    print(df_new_raw[['src_ip', 'dst_ip', 'dst_port', 'protocol', 'Predicted_Label']])
+    print("------------------------\n")
 
 if __name__ == '__main__':
-    completed_flows = process_pcap(PCAP_FILE)
-    if completed_flows:
-        print(f"\nReady to analyze {len(completed_flows)} flows.")
+    if os.path.exists(PCAP_TO_ANALYZE):
+        predict_from_pcap(PCAP_TO_ANALYZE)
+    else:
+        print(f"Input file not found: {PCAP_TO_ANALYZE}")
+
