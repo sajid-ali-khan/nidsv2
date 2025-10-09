@@ -4,10 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="2b0106d1-6eec-494b-ab17-371078d093e3" name="Changes" comment="changed branch to main">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/__init__.py" afterDir="false" />
-    </list>
+    <list default="true" id="2b0106d1-6eec-494b-ab17-371078d093e3" name="Changes" comment="changed branch to main" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -29,12 +26,12 @@
     &quot;assignee&quot;: &quot;sajid-ali-khan&quot;
   }
 }</component>
-  <component name="GithubPullRequestsUISettings">{
-  &quot;selectedUrlAndAccountId&quot;: {
-    &quot;url&quot;: &quot;https://github.com/sajid-ali-khan/nidsv2.git&quot;,
-    &quot;accountId&quot;: &quot;5a299cc6-3f78-4555-b7d4-a07fdcf782df&quot;
+  <component name="GithubPullRequestsUISettings"><![CDATA[{
+  "selectedUrlAndAccountId": {
+    "url": "https://github.com/sajid-ali-khan/nidsv2.git",
+    "accountId": "448b36d3-91af-4bf7-8d62-95fb06c2b46d"
   }
-}</component>
+}]]></component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 7
 }</component>
@@ -84,6 +81,7 @@
       <workItem from="1759858498730" duration="1879000" />
       <workItem from="1759921008569" duration="3640000" />
       <workItem from="1759977145566" duration="549000" />
+      <workItem from="1759999288821" duration="2416000" />
     </task>
     <task id="LOCAL-00001" summary="changed branch to main">
       <option name="closed" value="true" />
