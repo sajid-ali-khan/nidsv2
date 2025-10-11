@@ -5,6 +5,8 @@ import time
 import platform
 import threading
 import queue
+import requests
+from datetime import datetime, timezone
 from scapy.all import sniff, wrpcap
 from scapy.layers.inet import IP, TCP, UDP
 from pyflowmeter.sniffer import create_sniffer
@@ -12,6 +14,8 @@ from pyflowmeter.sniffer import create_sniffer
 # --- Configuration: Define paths and real-time settings ---
 MODEL_PATH = '/home/sajid/PycharmProjects/nidsv2/src/random_forest_model.pkl'
 COLUMNS_PATH = '/home/sajid/PycharmProjects/nidsv2/src/model_columns.joblib'
+BACKEND_API_URL = "http://127.0.0.1:8000/api/log_event"  # URL for the FastAPI backend
+
 default_interface = 'wlp3s0' if platform.system() == 'Linux' else 'en0' if platform.system() == 'Darwin' else 'Ethernet'
 NETWORK_INTERFACE = os.getenv("NETWORK_INTERFACE", default_interface)
 FLOW_TIMEOUT_SECONDS = 15  # Inactivity timeout (for UDP or abandoned TCP)
@@ -55,7 +59,7 @@ def create_feature_mapping():
 
 
 def analysis_worker(model, model_columns):
-    """Consumer thread: processes flows from the queue."""
+    """Consumer thread: processes flows, makes predictions, and sends structured data to the backend."""
     while True:
         flow_to_process = analysis_queue.get()
         flow_key, packets = flow_to_process['key'], flow_to_process['packets']
@@ -91,12 +95,36 @@ def analysis_worker(model, model_columns):
 
             predictions = model.predict(df_aligned)
 
+            # --- BUILD AND SEND DATA ACCORDING TO THE NEW CONTRACT ---
+            flow_details = df_new_raw.iloc[0]
 
-            df_new_raw['Predicted_Label'] = predictions
+            # Unpack flow_key tuple for clarity
+            ip1, port1, ip2, port2, proto = flow_key
 
-            print(f"\n--- Prediction for Flow {flow_key} ---")
-            print(df_new_raw[['src_ip', 'dst_ip', 'dst_port', 'protocol', 'Predicted_Label']].iloc[0])
-            print("------------------------------------------\n")
+            # The pyflowmeter output gives us the true source and destination
+            src_ip = str(flow_details.get('src_ip', ip1))
+            dst_ip = str(flow_details.get('dst_ip', ip2))
+            src_port = int(flow_details.get('src_port', port1))
+            dst_port = int(flow_details.get('dst_port', port2))
+
+            result_data = {
+                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                "flow_id": f"{src_ip}:{src_port}-{dst_ip}:{dst_port}-{proto}",
+                "source_ip": src_ip,
+                "source_port": src_port,
+                "dest_ip": dst_ip,
+                "dest_port": dst_port,
+                "protocol": proto,
+                "prediction": str(predictions[0]),
+                "flow_duration_ms": int(flow_details.get('duration', 0) * 1000)
+            }
+
+            try:
+                requests.post(BACKEND_API_URL, json=result_data)
+                print(f"✅ Sent prediction for flow {result_data['flow_id']} to backend.")
+            except requests.exceptions.ConnectionError:
+                print(f"❌ Could not connect to backend at {BACKEND_API_URL}. Is it running?")
+            # --- END OF SENDING ---
 
         finally:
             if os.path.exists(temp_pcap): os.remove(temp_pcap)
@@ -105,35 +133,26 @@ def analysis_worker(model, model_columns):
             analysis_queue.task_done()
 
 
-# def get_flow_key(packet):
-#     """Generates a standardized key for a packet's flow."""
-#     if IP in packet and (TCP in packet or UDP in packet):
-#         proto = 'TCP' if TCP in packet else 'UDP'
-#         src_ip, dst_ip = sorted((packet[IP].src, packet[IP].dst))
-#         src_port, dst_port = sorted((packet[proto].sport, packet[proto].dport))
-#         return src_ip, src_port, dst_ip, dst_port, proto
-#     return None
 def get_flow_key(packet):
     """Generates a standardized key for a packet's flow, ignoring malformed packets."""
     if IP in packet and (TCP in packet or UDP in packet):
         try:
-
             protocol = 'TCP' if TCP in packet else 'UDP'
             proto_layer = packet[protocol]
+
             # FIX 1: Explicitly convert ports to int before sorting
-            print(proto_layer.sport, proto_layer.dport)
-            print(type(proto_layer.sport), type(proto_layer.dport))
             sport = int(proto_layer.sport)
             dport = int(proto_layer.dport)
 
             ip1, ip2 = sorted((packet[IP].src, packet[IP].dst))
             port1, port2 = sorted((sport, dport))
+
             return (ip1, port1, ip2, port2, protocol)
         # FIX 2: Catch any errors from malformed packets and ignore them
         except (TypeError, ValueError):
-            print(TypeError, ValueError)
             return None
     return None
+
 
 def packet_handler(packet):
     """Producer: This function is called for every captured packet."""
@@ -144,23 +163,20 @@ def packet_handler(packet):
     with flows_lock:
         now = time.time()
         if flow_key not in active_flows:
-            # Add start_time for max life check
             active_flows[flow_key] = {'packets': [], 'start_time': now, 'last_seen': now}
 
         flow = active_flows[flow_key]
         flow['packets'].append(packet)
         flow['last_seen'] = now
 
-        # NEW: Check for TCP teardown flags for immediate analysis
         if TCP in packet:
             tcp_flags = packet[TCP].flags
-            # 'F' is FIN, 'R' is RST. Both signal the end of a connection.
             if 'F' in tcp_flags or 'R' in tcp_flags:
-                # This flow has ended cleanly, so we can process it immediately.
-                if flow_key in active_flows:  # Check if not already removed
+                if flow_key in active_flows:
                     flow_data = active_flows.pop(flow_key)
                     analysis_queue.put({'key': flow_key, 'packets': flow_data['packets']})
-                    print(f"Flow {flow_key} ended (FIN/RST). Moved to analysis queue.")
+                    # Keep print statements minimal for performance
+                    # print(f"Flow {flow_key} ended (FIN/RST).")
 
 
 def check_flow_timeouts():
@@ -169,22 +185,19 @@ def check_flow_timeouts():
         time.sleep(FLOW_TIMEOUT_SECONDS)
         now = time.time()
         with flows_lock:
-            # Iterate over a copy of keys to safely modify the dictionary
             for key in list(active_flows.keys()):
-                flow = active_flows[key]
+                flow = active_flows.get(key)
+                if not flow:
+                    continue
 
-                # Condition 1: Inactivity timeout (for UDP or abandoned TCP)
                 is_timed_out = (now - flow['last_seen']) > FLOW_TIMEOUT_SECONDS
-
-                # Condition 2: Max lifetime exceeded
                 is_max_life = (now - flow['start_time']) > FLOW_MAX_LIFE_SECONDS
 
                 if is_timed_out or is_max_life:
                     flow_data = active_flows.pop(key)
                     analysis_queue.put({'key': key, 'packets': flow_data['packets']})
-
-                    reason = "timed out" if is_timed_out else "exceeded max life"
-                    print(f"Flow {key} {reason}. Moved to analysis queue.")
+                    # reason = "timed out" if is_timed_out else "max life"
+                    # print(f"Flow {key} {reason}.")
 
 
 def start_event_driven_prediction():
@@ -197,15 +210,13 @@ def start_event_driven_prediction():
         print(f"❌ Error: Model or column file not found. Run the training script first.")
         return
 
-    # Start the consumer worker thread
     worker = threading.Thread(target=analysis_worker, args=(model, model_columns), daemon=True)
     worker.start()
-
-    # Start the flow timeout checker thread
     timeout_checker = threading.Thread(target=check_flow_timeouts, daemon=True)
     timeout_checker.start()
 
-    print(f"🚀 Starting event-driven traffic analysis on interface '{NETWORK_INTERFACE}'...")
+    print(f"🚀 Starting NIDS Engine on interface '{NETWORK_INTERFACE}'...")
+    print(f"Reporting to backend at {BACKEND_API_URL}")
     print("Press Ctrl+C to stop.")
 
     try:
