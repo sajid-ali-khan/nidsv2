@@ -1,0 +1,89 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    /* Cybersecurity Dark Theme - SOC Dashboard */
+    --background: 222 47% 11%;
+    --foreground: 210 40% 98%;
+
+    --card: 215 25% 17%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 215 25% 17%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 217 91% 60%;
+    --primary-foreground: 222 47% 11%;
+
+    --secondary: 215 20% 25%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 215 20% 25%;
+    --muted-foreground: 215 16% 65%;
+
+    --accent: 217 91% 60%;
+    --accent-foreground: 222 47% 11%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+
+    --success: 142 76% 36%;
+    --success-foreground: 210 40% 98%;
+
+    --warning: 25 95% 53%;
+    --warning-foreground: 222 47% 11%;
+
+    --border: 215 20% 25%;
+    --input: 215 20% 25%;
+    --ring: 217 91% 60%;
+
+    --radius: 0.5rem;
+
+    --chart-1: 217 91% 60%;
+    --chart-2: 271 91% 65%;
+    --chart-3: 142 76% 36%;
+    --chart-4: 25 95% 53%;
+    --chart-5: 0 84% 60%;
+  }
+}
+
+/* Custom scrollbar for dark theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: hsl(var(--background));
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted));
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground));
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans;
+    font-family: 'Inter', sans-serif;
+  }
+}
+
+/* Monospace font for IPs and ports */
+.font-mono {
+  font-family: 'JetBrains Mono', monospace;
+}
