@@ -1,3 +1,12 @@
+"""
+NIDS Engine - PCAP File Analysis
+
+Analyzes pre-captured PCAP files for offline testing and demonstration.
+Processes packets into flows, extracts features, classifies using ML model,
+and sends predictions to the backend API for dashboard visualization.
+
+"""
+
 import pandas as pd
 import joblib
 import os
@@ -10,21 +19,17 @@ from scapy.all import sniff, wrpcap
 from scapy.layers.inet import IP, TCP, UDP
 from pyflowmeter.sniffer import create_sniffer
 
-# --- Configuration: Point to your model, columns, and the PCAP file to test ---
-MODEL_PATH = '/home/sajid/PycharmProjects/nidsv2/src/random_forest_model.pkl'
-COLUMNS_PATH = '/home/sajid/PycharmProjects/nidsv2/src/model_columns.joblib'
-PCAP_TEST_FILE = '/home/sajid/PycharmProjects/nidsv2/src/sample.pcap'  # <--- THE PCAP FILE WE WILL ANALYZE
+MODEL_PATH = 'src/random_forest_model.pkl'
+COLUMNS_PATH = 'src/model_columns.joblib'
+PCAP_TEST_FILE = 'src/sample.pcap'
 BACKEND_API_URL = "http://127.0.0.1:8000/api/log_event"
 
-# --- Global State ---
 analysis_queue = queue.Queue()
 active_flows = {}
 flows_lock = threading.Lock()
 
 
-# --- All helper functions (create_feature_mapping, analysis_worker, get_flow_key) remain the same ---
 def create_feature_mapping():
-    """Creates the mapping from pyflowmeter's output to the model's expected column names."""
     return {
         'dst_port': 'Destination Port', 'duration': 'Flow Duration', 'fwd_pkts_tot': 'Total Fwd Packets',
         'fwd_bytes_tot': 'Total Length of Fwd Packets', 'fwd_pkt_len_max': 'Fwd Packet Length Max',
@@ -49,10 +54,9 @@ def create_feature_mapping():
 
 
 def analysis_worker(model, model_columns):
-    """Consumer thread: processes flows, makes predictions, and sends data to the backend."""
     while True:
         flow_to_process = analysis_queue.get()
-        if flow_to_process is None:  # Sentinel value to stop the worker
+        if flow_to_process is None:
             break
 
         flow_key, packets = flow_to_process['key'], flow_to_process['packets']
@@ -117,7 +121,6 @@ def analysis_worker(model, model_columns):
 
 
 def get_flow_key(packet):
-    """Generates a standardized key for a packet's flow, robustly ignoring malformed packets."""
     if IP in packet and (TCP in packet or UDP in packet):
         try:
             protocol = 'TCP' if TCP in packet else 'UDP'
@@ -134,7 +137,6 @@ def get_flow_key(packet):
 
 
 def packet_handler(packet):
-    """Producer: Captures packets and groups them into flows."""
     flow_key = get_flow_key(packet)
     if not flow_key:
         return
@@ -154,7 +156,6 @@ def packet_handler(packet):
 
 
 def flush_remaining_flows():
-    """After reading the file, process any flows that didn't have a FIN/RST."""
     with flows_lock:
         print(f"\nFlushing {len(active_flows)} remaining flows for analysis...")
         for key, flow_data in active_flows.items():
@@ -163,7 +164,6 @@ def flush_remaining_flows():
 
 
 def test_engine_with_pcap(pcap_file):
-    """Main function to initialize and run the NIDS engine against a PCAP file."""
     if not os.path.exists(pcap_file):
         print(f"❌ Error: Test file not found at '{pcap_file}'")
         return

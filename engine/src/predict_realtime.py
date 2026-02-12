@@ -1,3 +1,12 @@
+"""
+NIDS Engine - Real-time Network Traffic Analysis
+
+Captures live network packets using Scapy, aggregates them into flows using 5-tuple keys,
+extracts features via pyflowmeter, and classifies traffic using a pre-trained Random Forest model.
+Uses producer-consumer threading pattern for non-blocking packet capture and ML inference.
+
+"""
+
 import pandas as pd
 import joblib
 import os
@@ -9,22 +18,19 @@ from scapy.all import sniff, wrpcap
 from scapy.layers.inet import IP, TCP, UDP
 from pyflowmeter.sniffer import create_sniffer
 
-# --- Configuration: Define paths and real-time settings ---
-MODEL_PATH = '/home/sajid/PycharmProjects/nidsv2/src/random_forest_model.pkl'
-COLUMNS_PATH = '/home/sajid/PycharmProjects/nidsv2/src/model_columns.joblib'
+MODEL_PATH = '/home/sajid/Desktop/nids/engine/src/random_forest_model.pkl'
+COLUMNS_PATH = '/home/sajid/Desktop/nids/engine/src/model_columns.joblib'
 default_interface = 'wlp3s0' if platform.system() == 'Linux' else 'en0' if platform.system() == 'Darwin' else 'Ethernet'
 NETWORK_INTERFACE = os.getenv("NETWORK_INTERFACE", default_interface)
-FLOW_TIMEOUT_SECONDS = 15  # Inactivity timeout (for UDP or abandoned TCP)
-FLOW_MAX_LIFE_SECONDS = 120  # Max lifetime for any flow to prevent memory issues
+FLOW_TIMEOUT_SECONDS = 15
+FLOW_MAX_LIFE_SECONDS = 120
 
-# --- Thread-safe queue for completed flows ---
 analysis_queue = queue.Queue()
 active_flows = {}
 flows_lock = threading.Lock()
 
 
 def create_feature_mapping():
-    """Creates a dictionary to map pyflowmeter column names to the model's expected names."""
     return {
         'dst_port': 'Destination Port', 'duration': 'Flow Duration',
         'fwd_pkts_tot': 'Total Fwd Packets', 'fwd_bytes_tot': 'Total Length of Fwd Packets',
@@ -55,7 +61,6 @@ def create_feature_mapping():
 
 
 def analysis_worker(model, model_columns):
-    """Consumer thread: processes flows from the queue."""
     while True:
         flow_to_process = analysis_queue.get()
         flow_key, packets = flow_to_process['key'], flow_to_process['packets']
@@ -114,13 +119,11 @@ def analysis_worker(model, model_columns):
 #         return src_ip, src_port, dst_ip, dst_port, proto
 #     return None
 def get_flow_key(packet):
-    """Generates a standardized key for a packet's flow, ignoring malformed packets."""
     if IP in packet and (TCP in packet or UDP in packet):
         try:
 
             protocol = 'TCP' if TCP in packet else 'UDP'
             proto_layer = packet[protocol]
-            # FIX 1: Explicitly convert ports to int before sorting
             print(proto_layer.sport, proto_layer.dport)
             print(type(proto_layer.sport), type(proto_layer.dport))
             sport = int(proto_layer.sport)
@@ -129,14 +132,12 @@ def get_flow_key(packet):
             ip1, ip2 = sorted((packet[IP].src, packet[IP].dst))
             port1, port2 = sorted((sport, dport))
             return (ip1, port1, ip2, port2, protocol)
-        # FIX 2: Catch any errors from malformed packets and ignore them
         except (TypeError, ValueError):
             print(TypeError, ValueError)
             return None
     return None
 
 def packet_handler(packet):
-    """Producer: This function is called for every captured packet."""
     flow_key = get_flow_key(packet)
     if not flow_key:
         return
@@ -144,39 +145,39 @@ def packet_handler(packet):
     with flows_lock:
         now = time.time()
         if flow_key not in active_flows:
-            # Add start_time for max life check
             active_flows[flow_key] = {'packets': [], 'start_time': now, 'last_seen': now}
 
         flow = active_flows[flow_key]
         flow['packets'].append(packet)
         flow['last_seen'] = now
 
-        # NEW: Check for TCP teardown flags for immediate analysis
+        
         if TCP in packet:
             tcp_flags = packet[TCP].flags
-            # 'F' is FIN, 'R' is RST. Both signal the end of a connection.
+            
             if 'F' in tcp_flags or 'R' in tcp_flags:
-                # This flow has ended cleanly, so we can process it immediately.
-                if flow_key in active_flows:  # Check if not already removed
+                
+                if flow_key in active_flows:
                     flow_data = active_flows.pop(flow_key)
                     analysis_queue.put({'key': flow_key, 'packets': flow_data['packets']})
                     print(f"Flow {flow_key} ended (FIN/RST). Moved to analysis queue.")
 
 
 def check_flow_timeouts():
-    """Periodically checks for inactive or excessively long-lived flows."""
     while True:
         time.sleep(FLOW_TIMEOUT_SECONDS)
         now = time.time()
         with flows_lock:
-            # Iterate over a copy of keys to safely modify the dictionary
+            
             for key in list(active_flows.keys()):
                 flow = active_flows[key]
 
-                # Condition 1: Inactivity timeout (for UDP or abandoned TCP)
+                
                 is_timed_out = (now - flow['last_seen']) > FLOW_TIMEOUT_SECONDS
 
-                # Condition 2: Max lifetime exceeded
+                
+
+
                 is_max_life = (now - flow['start_time']) > FLOW_MAX_LIFE_SECONDS
 
                 if is_timed_out or is_max_life:
@@ -188,33 +189,31 @@ def check_flow_timeouts():
 
 
 def start_event_driven_prediction():
-    """Main function to set up threads and start sniffing."""
     try:
         model = joblib.load(MODEL_PATH)
         model_columns = joblib.load(COLUMNS_PATH)
-        print("✅ Model and column list loaded successfully.")
+        print("Model and column list loaded successfully.")
     except FileNotFoundError:
-        print(f"❌ Error: Model or column file not found. Run the training script first.")
+        print(f"Error: Model or column file not found. Run the training script first.")
         return
 
-    # Start the consumer worker thread
+    
     worker = threading.Thread(target=analysis_worker, args=(model, model_columns), daemon=True)
     worker.start()
 
-    # Start the flow timeout checker thread
+    
     timeout_checker = threading.Thread(target=check_flow_timeouts, daemon=True)
     timeout_checker.start()
 
-    print(f"🚀 Starting event-driven traffic analysis on interface '{NETWORK_INTERFACE}'...")
-    print("Press Ctrl+C to stop.")
+    print(f"starting  event driven traffic analysis on interface '{NETWORK_INTERFACE}'...")
 
     try:
         sniff(iface=NETWORK_INTERFACE, prn=packet_handler, store=False)
     except KeyboardInterrupt:
-        print("\nStopping traffic capture.")
+        print("\nstopping traffic capture.")
     except Exception as e:
-        print(f"\nAn error occurred: {e}")
-        print("Please ensure you are running this script with administrator/root privileges.")
+        print(f"\nerror occurred: {e}")
+        print("issue with administrator/root privileges.")
 
 
 if __name__ == '__main__':

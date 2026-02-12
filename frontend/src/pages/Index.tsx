@@ -1,17 +1,23 @@
+/**
+ * NIDS Frontend - Real-Time Dashboard
+ * 
+ * React dashboard for visualizing network intrusion detection events.
+ * Connects to backend via WebSocket for live updates and REST API for historical data.
+ * Displays statistics, live event log, and attack distribution chart.
+ * 
+ * Author: Frontend Team
+ */
+
 import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Shield, Activity, CheckCircle2, AlertTriangle } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from "recharts";
 import { toast } from "sonner";
 
-// --- Configuration: Point this to your FastAPI backend ---
-// IMPORTANT: If your backend is on another machine (like a VM),
-// replace "127.0.0.1" with the actual network IP of that machine.
 const BACKEND_URL = "127.0.0.1:8000";
 const API_BASE_URL = `http://${BACKEND_URL}/api`;
 const WEBSOCKET_URL = `ws://${BACKEND_URL}/ws/events/stream`;
 
-// --- Type Definitions to match the Backend Data Contract ---
 type EventPrediction = "Normal Traffic" | "DDoS" | "Port Scanning" | "Brute Force" | "Bots" | "Web Attacks";
 
 interface NetworkEvent {
@@ -25,15 +31,13 @@ interface NetworkEvent {
 }
 
 const ATTACK_TYPES: EventPrediction[] = ["DDoS", "Port Scanning", "Brute Force", "Bots", "Web Attacks"];
-const MAX_EVENTS = 100; // Keep the log from growing indefinitely
+const MAX_EVENTS = 100;
 
 const Index = () => {
-  // --- State Management for Live Data ---
   const [events, setEvents] = useState<NetworkEvent[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const ws = useRef<WebSocket | null>(null);
 
-  // --- 1. Initial Data Load (runs once on component mount) ---
   useEffect(() => {
     const fetchInitialEvents = async () => {
       try {
@@ -43,7 +47,6 @@ const Index = () => {
           return;
         }
         const initialEventsData: NetworkEvent[] = await response.json();
-        // Reverse to show oldest first, so new live events appear on top
         setEvents(initialEventsData.reverse());
       } catch (error) {
         console.error("Error connecting to the backend API:", error);
@@ -51,9 +54,8 @@ const Index = () => {
       }
     };
     fetchInitialEvents();
-  }, []); // Empty dependency array [] ensures this runs only once.
+  }, []);
 
-  // --- 2. Real-Time WebSocket Connection (with reconnection logic) ---
   useEffect(() => {
     const connect = () => {
       ws.current = new WebSocket(WEBSOCKET_URL);
@@ -67,16 +69,13 @@ const Index = () => {
       ws.current.onmessage = (event) => {
         const newEvent: NetworkEvent = JSON.parse(event.data);
         
-        // FIX: Prevent duplicate keys by checking if the event already exists
         setEvents((prevEvents) => {
           if (prevEvents.some(e => e.flow_id === newEvent.flow_id)) {
-            return prevEvents; // If event exists, don't update state
+            return prevEvents;
           }
-          // Add the new event to the top and cap the total length
           return [newEvent, ...prevEvents].slice(0, MAX_EVENTS);
         });
 
-        // Trigger a toast notification for detected attacks
         if (newEvent.prediction !== "Normal Traffic") {
           toast.error(`🚨 ${newEvent.prediction} Detected!`, {
             description: `Source: ${newEvent.source_ip} → ${newEvent.dest_ip}:${newEvent.dest_port}`,
@@ -88,7 +87,6 @@ const Index = () => {
         console.log("WebSocket connection closed.");
         setIsConnected(false);
         toast.warning("Disconnected. Trying to reconnect in 5 seconds...");
-        // Attempt to reconnect after a delay
         setTimeout(() => {
           connect();
         }, 5000);
@@ -96,21 +94,19 @@ const Index = () => {
 
       ws.current.onerror = (error) => {
         console.error("WebSocket error:", error);
-        ws.current?.close(); // This will trigger the onclose handler for reconnection
+        ws.current?.close();
       };
     };
 
-    connect(); // Initial connection attempt
+    connect();
 
-    // Cleanup function: close the connection when the component is unmounted
     return () => {
       if (ws.current) {
         ws.current.close();
       }
     };
-  }, []); // Empty dependency array [] ensures this also runs only once.
+  }, []);
 
-  // --- All calculations below are now driven by the live state ---
   const totalEvents = events.length;
   const attacksDetected = events.filter((e) => e.prediction !== "Normal Traffic").length;
   const normalTraffic = totalEvents - attacksDetected;
@@ -127,7 +123,6 @@ const Index = () => {
 
   return (
     <div className="min-h-screen bg-background p-6">
-      {/* Header */}
       <header className="mb-8">
         <h1 className="text-4xl font-bold tracking-tight text-foreground flex items-center gap-3">
           <Shield className="h-10 w-10 text-primary" />
@@ -138,7 +133,6 @@ const Index = () => {
         </p>
       </header>
 
-      {/* Top Stat Cards (Now uses live data) */}
       <div className="mb-8 grid gap-6 md:grid-cols-3">
         <Card className="bg-card border-border">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -169,9 +163,7 @@ const Index = () => {
         </Card>
       </div>
 
-      {/* Main Content Area (Now uses live data) */}
       <div className="grid gap-6 lg:grid-cols-3">
-        {/* Live Event Log */}
         <Card className="bg-card border-border lg:col-span-2">
           <CardHeader>
             <CardTitle className="text-xl font-semibold text-card-foreground flex items-center gap-2">
@@ -216,7 +208,6 @@ const Index = () => {
           </CardContent>
         </Card>
 
-        {/* Attack Distribution Chart */}
         <Card className="bg-card border-border">
           <CardHeader>
             <CardTitle className="text-xl font-semibold text-card-foreground">Attack Distribution</CardTitle>

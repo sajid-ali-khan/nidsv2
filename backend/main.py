@@ -1,13 +1,22 @@
+"""
+NIDS Backend - FastAPI Server
+
+Provides REST API and WebSocket endpoints for the NIDS dashboard.
+Stores events in-memory, tracks attack statistics, and broadcasts
+real-time events to connected frontend clients.
+
+"""
+
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any
 import json
-import time  # Import the time module for high-resolution timestamps
+import time
 from collections import deque, Counter
 from datetime import datetime, timezone
 
 
-# --- In-Memory Data Store (no changes here) ---
 class NIDSDataStore:
     def __init__(self, max_events: int = 500):
         self.recent_events: deque = deque(maxlen=max_events)
@@ -38,10 +47,16 @@ class NIDSDataStore:
 
 
 data_store = NIDSDataStore()
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("Backend server started. Waiting for events...")
+    yield
+    print("Backend server shutting down...")
+
+app = FastAPI(lifespan=lifespan)
 
 
-# --- Connection Manager (with broadcast fix) ---
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
@@ -67,19 +82,13 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
 
 
-@app.on_event("startup")
-async def startup_event():
-    print("🚀 Backend server started. Waiting for events...")
 
-
-# --- API Endpoints ---
 @app.websocket("/ws/events/stream")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
@@ -109,7 +118,6 @@ async def get_events(limit: int = Query(50, ge=1, le=100), offset: int = Query(0
 async def log_event(request: Request):
     event_data = await request.json()
 
-    # --- FIX IS HERE: Make the flow_id unique before processing ---
     unique_flow_id = f"{event_data.get('flow_id', 'unknown_flow')}-{time.time_ns()}"
     event_data['flow_id'] = unique_flow_id
 

@@ -11,17 +11,15 @@ from scapy.all import sniff, wrpcap
 from scapy.layers.inet import IP, TCP, UDP
 from pyflowmeter.sniffer import create_sniffer
 
-# --- Configuration: Define paths and real-time settings ---
-MODEL_PATH = '/home/sajid/PycharmProjects/nidsv2/src/random_forest_model.pkl'
-COLUMNS_PATH = '/home/sajid/PycharmProjects/nidsv2/src/model_columns.joblib'
-BACKEND_API_URL = "http://127.0.0.1:8000/api/log_event"  # URL for the FastAPI backend
+MODEL_PATH = 'src/random_forest_model.pkl'
+COLUMNS_PATH = 'src/model_columns.joblib'
+BACKEND_API_URL = "http://127.0.0.1:8000/api/log_event"
 
 default_interface = 'wlp3s0' if platform.system() == 'Linux' else 'en0' if platform.system() == 'Darwin' else 'Ethernet'
 NETWORK_INTERFACE = os.getenv("NETWORK_INTERFACE", default_interface)
-FLOW_TIMEOUT_SECONDS = 15  # Inactivity timeout (for UDP or abandoned TCP)
-FLOW_MAX_LIFE_SECONDS = 120  # Max lifetime for any flow to prevent memory issues
+FLOW_TIMEOUT_SECONDS = 15
+FLOW_MAX_LIFE_SECONDS = 120
 
-# --- Thread-safe queue for completed flows ---
 analysis_queue = queue.Queue()
 active_flows = {}
 flows_lock = threading.Lock()
@@ -175,9 +173,6 @@ def packet_handler(packet):
                 if flow_key in active_flows:
                     flow_data = active_flows.pop(flow_key)
                     analysis_queue.put({'key': flow_key, 'packets': flow_data['packets']})
-                    # Keep print statements minimal for performance
-                    # print(f"Flow {flow_key} ended (FIN/RST).")
-
 
 def check_flow_timeouts():
     """Periodically checks for inactive or excessively long-lived flows."""
@@ -196,9 +191,6 @@ def check_flow_timeouts():
                 if is_timed_out or is_max_life:
                     flow_data = active_flows.pop(key)
                     analysis_queue.put({'key': key, 'packets': flow_data['packets']})
-                    # reason = "timed out" if is_timed_out else "max life"
-                    # print(f"Flow {key} {reason}.")
-
 
 def start_event_driven_prediction():
     """Main function to set up threads and start sniffing."""
